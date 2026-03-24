@@ -1,0 +1,39 @@
+import { Button, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+export component MainWindow inherits Window {
+    in property <[int]> data: [10, 50, 30, 80, 20];
+    in property <int> active_idx_a: -1;
+    in property <int> active_idx_b: -1;
+    callback start_sort();
+    width: 600px;
+    height: 400px;
+    title: "Slint Sorting Viz";
+    VerticalBox {
+        alignment: space-around;
+
+        // Obszar wizualizacji
+        HorizontalBox {
+            alignment: center;
+            spacing: 4px;
+            height: 250px;
+            for value[i] in root.data: Rectangle {
+                width: 20px;
+                height: value * 2px;
+                background: (i == root.active_idx_a || i == root.active_idx_b) ? #ff4757 : #70a1ff;
+                border-radius: 2px;
+                y: parent.height - self.height;
+                property <bool> is_active: i == root.active_idx_a || i == root.active_idx_b;
+                //background: is_active ? #ff4757 : #70a1ff;
+                animate background { duration: is_active ? 500ms : 0ms; }
+            }
+        }
+
+        Button {
+            text: "Uruchom Sortowanie (Bubble Sort)";
+            primary: true;
+            clicked => {
+                root.start_sort();
+            }
+        }
+    }
+}
