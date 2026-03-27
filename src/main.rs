@@ -1,4 +1,7 @@
+mod sorting;
+
 use std::io;
+use std::ops::{Index, IndexMut};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
@@ -16,11 +19,34 @@ fn main() -> io::Result<()> {
 }
 
 #[derive(Debug, Default)]
+struct SortingVec(Vec<u16>); //TODO: impl Index and IndexMut `-`<Range>
+
+impl Index<usize> for SortingVec {
+    type Output = u16;
+
+    fn index(&self, idx: usize) -> &Self::Output {
+        &self.0[idx]
+    }
+}
+
+impl IndexMut<usize> for SortingVec {
+    fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
+        &mut self.0[idx]
+    }
+}
+
+#[derive(Debug, Default)]
 pub struct App {
-    list: Vec<u64>,
-    change: (usize, usize),
-    read: Vec<usize>,
+    list: SortingVec,
+    change: ChangeRecord,
+    read: Option<Vec<usize>>,
     exit: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct ChangeRecord {
+    nums: (usize, usize),
+    state: u8,
 }
 
 impl App {}
@@ -43,7 +69,8 @@ impl Widget for &App {
             self.list
                 .iter()
                 .map(|x| x.to_string())
-                .collect::<Vec<String>>(),
+                .collect::<Vec<String>>()
+                .join(" "),
         )]);
 
         Paragraph::new(nums_text)
@@ -76,6 +103,7 @@ impl App {
     fn handle_key_event(&mut self, key_event: KeyEvent) {
         match key_event.code {
             KeyCode::Char('e') => self.exit(),
+            KeyCode::Char('q') => sorting::quicksort::sort()
             KeyCode::Left => self.decrement_counter(),
             KeyCode::Right => self.increment_counter(),
             _ => {}
@@ -87,7 +115,7 @@ impl App {
     }
 
     fn increment_counter(&mut self) {
-        self.list.push(rand.gen_range(0..=999));
+        self.list.push(rand::random_range(0..=999));
     }
 
     fn decrement_counter(&mut self) {
