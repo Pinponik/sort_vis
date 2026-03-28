@@ -1,7 +1,10 @@
 mod sorting;
 
 use std::io;
-use std::ops::{Index, IndexMut};
+use std::ops::Range;
+use std::sync::{Arc, RwLock};
+use std::thread;
+use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
@@ -18,20 +21,57 @@ fn main() -> io::Result<()> {
     ratatui::run(|terminal| App::default().run(terminal))
 }
 
-#[derive(Debug, Default)]
-struct SortingVec(Vec<u16>); //TODO: impl Index and IndexMut `-`<Range>
+#[derive(Debug, Clone)]
+struct SortingVec {
+    data: Arc<RwLock<Vec<u16>>>,
+    start: usize,
+    end: usize,
+}
 
-impl Index<usize> for SortingVec {
-    type Output = u16;
-
-    fn index(&self, idx: usize) -> &Self::Output {
-        &self.0[idx]
+impl Default for SortingVec {
+    fn default() -> Self {
+        SortingVec {
+            data: Arc::new(RwLock::new(vec![])),
+            start: 0,
+            end: 0,
+        }
     }
 }
 
-impl IndexMut<usize> for SortingVec {
-    fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
-        &mut self.0[idx]
+impl SortingVec {
+    fn len(&self) -> usize {
+        self.end - self.start
+    }
+
+    fn swap(&mut self, i: usize, j: usize) {
+        thread::sleep(Duration::from_secs(2));
+
+        self.data
+            .write()
+            .unwrap()
+            .swap(self.start + i, self.start + j);
+    }
+
+    fn sub(&self, idx: Range<usize>) -> SortingVec {
+        SortingVec {
+            data: self.data.clone(),
+            start: self.start + idx.start,
+            end: self.start + idx.end,
+        }
+    }
+
+    fn push(&mut self, value: u16) {
+        self.data.write().unwrap().insert(self.end, value);
+        self.end += 1;
+    }
+
+    fn pop(&mut self) -> Option<u16> {
+        if self.end > self.start {
+            self.end -= 1;
+            Some(self.data.write().unwrap().remove(self.end))
+        } else {
+            None
+        }
     }
 }
 
@@ -65,8 +105,10 @@ impl Widget for &App {
             .title_bottom(instructions.centered())
             .border_set(border::THICK);
 
+        let borrowed = self.list.data.read().unwrap();
+        let slice = &borrowed[self.list.start..self.list.end];
         let nums_text = Text::from(vec![Line::from(
-            self.list
+            slice
                 .iter()
                 .map(|x| x.to_string())
                 .collect::<Vec<String>>()
@@ -103,9 +145,14 @@ impl App {
     fn handle_key_event(&mut self, key_event: KeyEvent) {
         match key_event.code {
             KeyCode::Char('e') => self.exit(),
-            KeyCode::Char('q') => sorting::quicksort::sort()
             KeyCode::Left => self.decrement_counter(),
             KeyCode::Right => self.increment_counter(),
+            KeyCode::Char('q') => {
+                let mut list = self.list.clone();
+                thread::spawn(move || {
+                    sorting::quicksort::sort(&mut list);
+                });
+            }
             _ => {}
         }
     }
