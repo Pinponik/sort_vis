@@ -4,7 +4,6 @@ use std::io;
 use std::ops::Range;
 use std::sync::{Arc, RwLock};
 use std::thread;
-use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
@@ -44,8 +43,6 @@ impl SortingVec {
     }
 
     fn swap(&mut self, i: usize, j: usize) {
-        thread::sleep(Duration::from_secs(2));
-
         self.data
             .write()
             .unwrap()
@@ -78,7 +75,7 @@ impl SortingVec {
 #[derive(Debug, Default)]
 pub struct App {
     list: SortingVec,
-    change: ChangeRecord,
+    change: Option<ChangeRecord>,
     read: Option<Vec<usize>>,
     exit: bool,
 }
@@ -107,13 +104,28 @@ impl Widget for &App {
 
         let borrowed = self.list.data.read().unwrap();
         let slice = &borrowed[self.list.start..self.list.end];
-        let nums_text = Text::from(vec![Line::from(
-            slice
-                .iter()
-                .map(|x| x.to_string())
-                .collect::<Vec<String>>()
-                .join(" "),
-        )]);
+
+        let mut v = vec![];
+        for i in 0..slice.len() {
+            v.push(format!(
+                "{}{}{}{}\x1b[0m",
+                if slice[i] < 100 { " " } else { "" },
+                if slice[i] < 10 { " " } else { "" },
+                if let Some(r @ ChangeRecord {..}) = &self.change {
+                    if r.nums.0 == i || r.nums.1 == i {
+                        match r.state {
+                            0 => "\x1b[31m"
+                    } else {
+                        "\x1b[0m" // reset
+                    }
+                } else {
+                    "\x1b[0m" // reset
+                },
+                slice[i]
+            ));
+        }
+
+        let nums_text = Text::from(vec![Line::from(v.join(" "))]);
 
         Paragraph::new(nums_text)
             .centered()
