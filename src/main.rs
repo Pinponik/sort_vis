@@ -1,13 +1,13 @@
 mod sorting;
 
-use std::io;
-use std::ops::Range;
-use std::sync::{Arc, RwLock};
-use std::thread;
-
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::execute;
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
+use ratatui::DefaultTerminal;
 use ratatui::{
-    DefaultTerminal, Frame,
+    Frame,
     buffer::Buffer,
     layout::Rect,
     style::{Color, Style, Stylize},
@@ -15,16 +15,39 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Paragraph, Widget},
 };
+use std::io;
+use std::ops::Range;
+use std::sync::{Arc, Mutex, RwLock};
+use std::thread;
 
 fn main() -> io::Result<()> {
-    ratatui::run(|terminal| App::default().run(terminal))
+    std::panic::set_hook(Box::new(|info| {
+        println!("Panic: {}", info);
+    }));
+    println!("Starting Ratatui app");
+    if let Err(e) = enable_raw_mode() {
+        println!("Enable raw mode error: {}", e);
+        return Ok(());
+    }
+    println!("Raw mode enabled");
+    if let Err(e) = execute!(io::stdout(), EnterAlternateScreen) {
+        println!("Enter alternate screen error: {}", e);
+        return Ok(());
+    }
+    println!("Alternate screen entered");
+    let result = ratatui::run(|terminal| App::default().run(terminal));
+    println!("After ratatui run");
+    let _ = disable_raw_mode();
+    let _ = execute!(io::stdout(), LeaveAlternateScreen);
+    println!("App finished");
+    result
 }
 
 #[derive(Debug, Clone)]
 struct SortingVec {
     data: Arc<RwLock<Vec<u16>>>,
-    change: Arc<RwLock<Option<ChangeRecord>>>,
-    read: Arc<RwLock<Option<Vec<usize>>>>,
+    change: Arc<Mutex<Option<ChangeRecord>>>,
+    read: Arc<Mutex<Option<Vec<usize>>>>,
     start: usize,
     end: usize,
 }
@@ -33,8 +56,8 @@ impl Default for SortingVec {
     fn default() -> Self {
         SortingVec {
             data: Arc::new(RwLock::new(vec![])),
-            change: Arc::new(RwLock::new(None)),
-            read: Arc::new(RwLock::new(None)),
+            change: Arc::new(Mutex::new(None)),
+            read: Arc::new(Mutex::new(None)),
             start: 0,
             end: 0,
         }
@@ -47,8 +70,8 @@ impl SortingVec {
     }
 
     fn swap(&mut self, i: usize, j: usize) {
-        *self.change.write().unwrap() = Some(ChangeRecord {
-            nums: (i, j),
+        *self.change.lock().unwrap() = Some(ChangeRecord {
+            nums: (self.start + i, self.start + j),
             state: 0,
         });
 
@@ -61,23 +84,23 @@ impl SortingVec {
 
         std::thread::sleep(std::time::Duration::from_millis(500));
 
-        *self.change.write().unwrap() = None;
+        *self.change.lock().unwrap() = None;
     }
 
     fn sub(&self, idx: Range<usize>) -> SortingVec {
         if idx.end - idx.start == 1 {
             return SortingVec {
                 data: self.data.clone(),
-                change: Arc::new(RwLock::new(None)),
-                read: Arc::new(RwLock::new(Some(vec![self.start]))),
+                change: Arc::new(Mutex::new(None)),
+                read: Arc::new(Mutex::new(Some(vec![self.start]))),
                 start: self.start + idx.start,
                 end: self.start + idx.end,
             };
         } else {
             SortingVec {
                 data: self.data.clone(),
-                change: Arc::new(RwLock::new(None)),
-                read: Arc::new(RwLock::new(None)),
+                change: Arc::new(Mutex::new(None)),
+                read: Arc::new(Mutex::new(None)),
                 start: self.start + idx.start,
                 end: self.start + idx.end,
             }
@@ -115,7 +138,17 @@ impl App {}
 
 impl Widget for &App {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let title = Line::from(" Sorting Visualization App ".bold());
+        eprintln!("Rendering app");
+        let borrowed = self.list.data.read().unwrap();
+        let slice = &borrowed[self.list.start..self.list.end];
+
+        let change_lock = self.list.change.lock().unwrap();
+
+        let title = if change_lock.is_some() {
+            Line::from(" Sorting in progress... ".bold())
+        } else {
+            Line::from(" Sorting Visualization App ".bold())
+        };
         let instructions = Line::from(vec![
             " Quicksort ".into(),
             "<q>".blue().into(),
@@ -127,11 +160,8 @@ impl Widget for &App {
             .title_bottom(instructions.centered())
             .border_set(border::THICK);
 
-        let borrowed = self.list.data.read().unwrap();
-        let slice = &borrowed[self.list.start..self.list.end];
-
         let mut v = vec![];
-        let change_lock = self.list.change.read().unwrap();
+        let change_lock = self.list.change.lock().unwrap();
         for i in 0..slice.len() {
             let num_str = format!(
                 "{}{}{} ",
@@ -142,7 +172,7 @@ impl Widget for &App {
 
             let style = if let Some(r @ ChangeRecord { .. }) = change_lock.as_ref() {
                 if r.nums.0 == i || r.nums.1 == i {
-                    Style::default().fg(Color::Red).bold()
+                    Style::default().bg(Color::Red).fg(Color::White).bold()
                 } else {
                     Style::default()
                 }
@@ -153,7 +183,10 @@ impl Widget for &App {
             v.push(Span::styled(num_str, style));
         }
 
-        let nums_text = Text::from(vec![Line::from(v)]);
+        let nums_text = Text::from(vec![
+            Line::from(v),
+            Line::from(format!("Length: {}", slice.len())),
+        ]);
 
         Paragraph::new(nums_text)
             .centered()
@@ -211,12 +244,14 @@ impl App {
         self.list.pop();
     }
 
-    /// runs the application's main loop until the user quits
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
+        eprintln!("Starting run loop");
         while !self.exit {
+            eprintln!("In run loop");
             terminal.draw(|frame| self.draw(frame))?;
             self.handle_events()?;
         }
+        eprintln!("Exiting run loop");
         Ok(())
     }
 }
