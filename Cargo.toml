@@ -3,7 +3,15 @@ name = "sort_vis"
 version = "0.1.0"
 edition = "2024"
 
+[profile.release]
+opt-level = 3
+strip = true
+debug = false
+
 [dependencies]
 ratatui = "0.30.0"
 crossterm = "0.29"
 rand = "0.10.0"
+
+[[bin]]
+name = "sort_vis"
