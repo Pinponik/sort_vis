@@ -10,9 +10,9 @@ use ratatui::{
     Frame,
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Style, Stylize},
+    style::Stylize,
     symbols::border,
-    text::{Line, Span, Text},
+    text::{Line, Text},
     widgets::{Block, Paragraph, Widget},
 };
 use std::io;
@@ -46,8 +46,8 @@ fn main() -> io::Result<()> {
 #[derive(Debug, Clone)]
 struct SortingVec {
     data: Arc<RwLock<Vec<u16>>>,
-    change: Arc<Mutex<Option<ChangeRecord>>>,
-    read: Arc<Mutex<Option<Vec<usize>>>>,
+    change: Arc<RwLock<Option<ChangeRecord>>>,
+    read: Arc<RwLock<Option<Vec<usize>>>>,
     start: usize,
     end: usize,
 }
@@ -56,8 +56,8 @@ impl Default for SortingVec {
     fn default() -> Self {
         SortingVec {
             data: Arc::new(RwLock::new(vec![])),
-            change: Arc::new(Mutex::new(None)),
-            read: Arc::new(Mutex::new(None)),
+            change: Arc::new(RwLock::new(None)),
+            read: Arc::new(RwLock::new(None)),
             start: 0,
             end: 0,
         }
@@ -70,8 +70,8 @@ impl SortingVec {
     }
 
     fn swap(&mut self, i: usize, j: usize) {
-        *self.change.lock().unwrap() = Some(ChangeRecord {
-            nums: (self.start + i, self.start + j),
+        *self.change.write().unwrap() = Some(ChangeRecord {
+            nums: (i, j),
             state: 0,
         });
 
@@ -84,23 +84,23 @@ impl SortingVec {
 
         std::thread::sleep(std::time::Duration::from_millis(500));
 
-        *self.change.lock().unwrap() = None;
+        *self.change.write().unwrap() = None;
     }
 
     fn sub(&self, idx: Range<usize>) -> SortingVec {
         if idx.end - idx.start == 1 {
             return SortingVec {
                 data: self.data.clone(),
-                change: Arc::new(Mutex::new(None)),
-                read: Arc::new(Mutex::new(Some(vec![self.start]))),
+                change: Arc::new(RwLock::new(None)),
+                read: Arc::new(RwLock::new(Some(vec![self.start]))),
                 start: self.start + idx.start,
                 end: self.start + idx.end,
             };
         } else {
             SortingVec {
                 data: self.data.clone(),
-                change: Arc::new(Mutex::new(None)),
-                read: Arc::new(Mutex::new(None)),
+                change: Arc::new(RwLock::new(None)),
+                read: Arc::new(RwLock::new(None)),
                 start: self.start + idx.start,
                 end: self.start + idx.end,
             }
@@ -125,10 +125,12 @@ impl SortingVec {
 #[derive(Debug, Default)]
 pub struct App {
     list: SortingVec,
+    change: Option<ChangeRecord>,
+    read: Option<Vec<usize>>,
     exit: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct ChangeRecord {
     nums: (usize, usize),
     state: u8,
@@ -138,17 +140,7 @@ impl App {}
 
 impl Widget for &App {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        eprintln!("Rendering app");
-        let borrowed = self.list.data.read().unwrap();
-        let slice = &borrowed[self.list.start..self.list.end];
-
-        let change_lock = self.list.change.lock().unwrap();
-
-        let title = if change_lock.is_some() {
-            Line::from(" Sorting in progress... ".bold())
-        } else {
-            Line::from(" Sorting Visualization App ".bold())
-        };
+        let title = Line::from(" Sorting Visualization App ".bold());
         let instructions = Line::from(vec![
             " Quicksort ".into(),
             "<q>".blue().into(),
@@ -161,10 +153,10 @@ impl Widget for &App {
             .border_set(border::THICK);
 
         let mut v = vec![];
-        let change_lock = self.list.change.lock().unwrap();
+        let change_lock = self.list.change.read().unwrap();
         for i in 0..slice.len() {
-            let num_str = format!(
-                "{}{}{} ",
+            v.push(format!(
+                "{}{}{}{}\x1b[0m",
                 if slice[i] < 100 { " " } else { "" },
                 if slice[i] < 10 { " " } else { "" },
                 slice[i]
@@ -172,21 +164,15 @@ impl Widget for &App {
 
             let style = if let Some(r @ ChangeRecord { .. }) = change_lock.as_ref() {
                 if r.nums.0 == i || r.nums.1 == i {
-                    Style::default().bg(Color::Red).fg(Color::White).bold()
+                    Style::default().fg(Color::Red).bold()
                 } else {
-                    Style::default()
-                }
-            } else {
-                Style::default()
-            };
-
-            v.push(Span::styled(num_str, style));
+                    "\x1b[0m" // reset
+                },
+                slice[i]
+            ));
         }
 
-        let nums_text = Text::from(vec![
-            Line::from(v),
-            Line::from(format!("Length: {}", slice.len())),
-        ]);
+        let nums_text = Text::from(vec![Line::from(v)]);
 
         Paragraph::new(nums_text)
             .centered()
@@ -204,16 +190,14 @@ impl App {
 impl App {
     /// updates the application's state based on user input
     fn handle_events(&mut self) -> io::Result<()> {
-        if event::poll(std::time::Duration::from_millis(16))? {
-            match event::read()? {
-                // it's important to check that the event is a key press event as
-                // crossterm also emits key release and repeat events on Windows.
-                Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                    self.handle_key_event(key_event)
-                }
-                _ => {}
-            };
-        }
+        match event::read()? {
+            // it's important to check that the event is a key press event as
+            // crossterm also emits key release and repeat events on Windows.
+            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
+                self.handle_key_event(key_event)
+            }
+            _ => {}
+        };
         Ok(())
     }
 
